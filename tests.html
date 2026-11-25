@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de inventario v2 · Flor del Nilo</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 780px; padding: 0 1rem; color: #26332c; }
+    h1 { font-size: 1.4rem; }
+    .aviso { background: #fdf3e4; border-left: 4px solid #d99a3a; padding: .8rem 1rem; }
+    ul { padding-left: 1.2rem; }
+    .ok { color: #1d7a45; }
+    .fail { color: #b3261e; font-weight: 700; }
+    #resumen { font-weight: 700; margin: 1rem 0; }
+    code { background: #eef2ef; padding: .1rem .3rem; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de inventario v2</h1>
+  <p class="aviso">
+    <strong>Supuestos, no datos reales:</strong> el formato v1 histórico no se pudo verificar.
+    Las fixtures de v1 en esta página son <em>supuestos construidos para la prueba</em> (una
+    posible forma interina), no una muestra auténtica de datos v1. La migración está diseñada
+    para tolerar cualquier forma, por lo que las aserciones se centran en invariantes v2.
+  </p>
+  <p>Se usan módulos ES nativos y <code>console.assert</code>. Al terminar se restaura la clave original.</p>
+  <div id="resumen">Ejecutando…</div>
+  <ul id="detalle"></ul>
+
+  <script type="module">
+    import * as storage from './js/inventory/storage.js';
+    import { CONFIG } from './js/config.js';
+    import { createSeedState } from './js/inventory/seed.js';
+    import { deltaMovimiento, recalcBalances, consumeFIFO } from './js/inventory/ledger.js';
+    import {
+      estadoProducto, productoDisponible, validarDisponibilidad, descontarPedido,
+      registrarMovimientoEnDraft, guardarInsumoEnDraft, guardarRecetaEnDraft
+    } from './js/inventory/operations.js';
+    import { createOrder } from './js/orders.js';
+
+    const KEY = CONFIG.storageKey;
+    const CLAVE_OTRA = 'flor-del-nilo-prueba-otra-clave';
+    const claveOriginal = localStorage.getItem(KEY);
+    const clavesIniciales = new Set(Object.keys(localStorage));
+    const resultados = [];
+
+    function assert(condicion, mensaje) {
+      const ok = !!condicion;
+      console.assert(ok, mensaje);
+      resultados.push({ ok, mensaje });
+    }
+
+    const claves = () => Object.keys(localStorage);
+    const nombreInsumo = (estado, nombre) => estado.inventario.insumos.find((i) => i.nombre === nombre);
+
+    async function prueba(nombre, fn) {
+      try {
+        await fn();
+        console.assert(true, `Caso: ${nombre}`);
+      } catch (error) {
+        assert(false, `${nombre}: excepción inesperada → ${error && error.message ? error.message : error}`);
+      }
+    }
+
+    async function ejecutar() {
+      await prueba('semilla v2', () => {
+        const estado = createSeedState();
+        assert(estado.schemaVersion === 2, 'semilla usa schemaVersion 2');
+        const colecciones = ['insumos', 'proveedores', 'movimientos', 'recetas', 'lotes', 'mermas'];
+        assert(colecciones.every((c) => Array.isArray(estado.inventario[c])), 'semilla incluye las 6 colecciones de inventario');
+        const esperados = ['Rosas nacionales', 'Claveles', 'Girasoles', 'Follaje verde', 'Papel kraft', 'Cinta de yute'];
+        assert(esperados.every((nombre) => nombreInsumo(estado, nombre)), 'semilla incluye los 6 insumos requeridos');
+        assert(estado.inventario.movimientos.every((m) => m.tipo === 'apertura'), 'todas las aperturas de semilla son tipo apertura');
+        assert(estado.productos.length === 9 && estado.productos.every((p) =>
+          typeof p.recetaId === 'string' && estado.inventario.recetas.some((r) => r.id === p.recetaId)
+        ), 'todo producto de semilla tiene recetaId válido');
+        assert(estado.productos.every((p) => Number.isInteger(p.precioCentavos)), 'precios en enteros centavos');
+        assert(estado.inventario.movimientos.every((m) => /^\d{4}-\d{2}-\d{2}T/.test(m.fecha)), 'fechas ISO 8601');
+        assert(estado.inventario.movimientos.every((m) => /^mov-/.test(m.id)), 'IDs de movimientos con prefijo');
+      });
+
+      await prueba('saldos derivados del ledger', () => {
+        const estado = createSeedState();
+        recalcBalances(estado);
+        const rosas = nombreInsumo(estado, 'Rosas nacionales');
+        const cinta = nombreInsumo(estado, 'Cinta de yute');
+        assert(rosas.stockActual === 120, 'stockActual de rosas = 70 + 50');
+        assert(cinta.stockActual === 12.5, 'stock de cinta admite decimales por unidad');
+        const lotesRosas = estado.inventario.lotes.filter((l) => l.insumoId === rosas.id);
+        assert(lotesRosas.reduce((s, l) => s + l.cantidadActual, 0) === 120, 'lotesRosas suman el stock del insumo');
+        rosas.stockActual = 999;
+        recalcBalances(estado);
+        assert(rosas.stockActual === 120, 'recalc restaura saldo derivado');
+      });
+
+      await prueba('signos de movimientos y correcciones', () => {
+        assert(deltaMovimiento({ tipo: 'entrada', cantidad: 5 }) === 5, 'entrada suma');
+        assert(deltaMovimiento({ tipo: 'apertura', cantidad: 5 }) === 5, 'apertura suma');
+        assert(deltaMovimiento({ tipo: 'salida', cantidad: 5 }) === -5, 'salida resta');
+        assert(deltaMovimiento({ tipo: 'merma', cantidad: 2 }) === -2, 'merma resta');
+        assert(deltaMovimiento({ tipo: 'ajuste', cantidad: -3 }) === -3, 'ajuste permite corrección negativa');
+        assert(typeof storage.removeMovimiento === 'undefined' && typeof storage.deleteMovimiento === 'undefined', 'no existe API para borrar movimientos');
+      });
+
+      await prueba('FIFO: un movimiento por lote', () => {
+        const estado = createSeedState();
+        const rosas = nombreInsumo(estado, 'Rosas nacionales');
+        const creados = consumeFIFO(estado, rosas.id, 80, { tipo: 'pedido', id: 'ped-prueba' });
+        assert(creados.length === 2, '80 tallos consumen 2 lotes');
+        assert(creados[0].cantidad === 70 && creados[1].cantidad === 10, 'FIFO agota el lote antiguo primero');
+        assert(creados.every((m) => m.tipo === 'salida'), 'cada salida es un movimiento');
+        assert(creados.every((m) => m.referencia.id === 'ped-prueba'), 'referencia se propaga a cada movimiento');
+        assert(rosas.stockActual === 40, 'stock restante después del consumo');
+        let error = null;
+        try { consumeFIFO(estado, rosas.id, 999, { tipo: 'pedido', id: 'ped-falla' }); } catch (e) { error = e; }
+        assert(!!error && /Stock insuficiente/.test(error.message), 'FIFO falla con error explícito si no hay stock');
+      });
+
+      await prueba('normalización tolerante de formas desconocidas', () => {
+        const estado = storage.normalizeState({
+          productos: 'no es arreglo',
+          carrito: null,
+          pedidos: {},
+          clientes: 42,
+          disponibilidad: [],
+          inventario: 'forma rara',
+          claveViejaNoReconocida: 'se conserva',
+          legacy: { yaEstaba: true }
+        });
+        assert(estado.schemaVersion === 2, 'forma rara se normaliza a v2');
+        assert(estado.productos.length === 9, 'productos inválidos se reponen con semilla');
+        assert(estado.inventario.insumos.length === 6, 'inventario inválido se repone con semilla');
+        assert(estado.legacy.claveViejaNoReconocida === 'se conserva' && estado.legacy.yaEstaba === true, 'claves no reconocidas van a legacy');
+      });
+
+      await prueba('decimales solo donde la unidad lo permite', () => {
+        const base = {
+          inventario: {
+            proveedores: [], recetas: [], lotes: [], mermas: [],
+            insumos: [{ id: 'ins-prueba', nombre: 'Tallos', unidad: 'tallos', permiteDecimales: false }],
+            movimientos: [{ tipo: 'entrada', insumoId: 'ins-prueba', cantidad: 3.7, fecha: '2026-01-01T00:00:00.000Z' }]
+          },
+          productos: []
+        };
+        const entero = storage.normalizeState(base);
+        assert(entero.inventario.movimientos[0].cantidad === 4, 'tallos redondean a entero');
+        const baseDecimal = JSON.parse(JSON.stringify(base));
+        baseDecimal.inventario.insumos[0].permiteDecimales = true;
+        baseDecimal.inventario.insumos[0].unidad = 'rollos';
+        baseDecimal.inventario.movimientos[0].cantidad = 2.75;
+        const decimal = storage.normalizeState(baseDecimal);
+        assert(decimal.inventario.movimientos[0].cantidad === 2.75, 'rollos conservan decimales');
+      });
+
+      // FIXTURE SUPUESTA: un posible v1 interino. No es un dato v1 real verificado.
+      const v1Supuesto = {
+        version: 'demo-v1-interino',
+        productos: [{ id: 'prod-viejo', nombre: 'Ramo viejo', precioCentavos: 9900 }],
+        carrito: [],
+        pedidos: [],
+        clientes: [],
+        disponibilidad: {},
+        notaViejaNoReconocida: 'supuesto de prueba'
+      };
+
+      await prueba('migración de fixture v1 supuesta', async () => {
+        await storage.migrateV1(v1Supuesto);
+        const migrado = await storage.getAll();
+        assert(migrado.schemaVersion === 2, 'estado migrado es v2');
+        assert(migrado.legacy.version === 'demo-v1-interino', 'clave version se conserva en legacy');
+        assert(migrado.legacy.notaViejaNoReconocida === 'supuesto de prueba', 'nota vieja se conserva en legacy');
+        assert(migrado.productos[0].precioCentavos === 9900, 'producto v1 se conserva');
+        assert(typeof migrado.productos[0].recetaId === 'string', 'producto migrado obtiene recetaId');
+        assert(claves().some((c) => c.startsWith(`${KEY}.backup-`)), 'se crea respaldo .backup-<fecha>');
+        const antes = claves().filter((c) => c.startsWith(`${KEY}.backup-`)).length;
+        await storage.getAll();
+        await storage.getAll();
+        assert(claves().filter((c) => c.startsWith(`${KEY}.backup-`)).length === antes, 'migración se escribe una sola vez');
+      });
+
+      await prueba('JSON corrupto', async () => {
+        const estado = await storage.migrateV1('{ json roto');
+        assert(estado.schemaVersion === 2, 'JSON corrupto se sustituye por semilla v2');
+        assert(claves().some((c) => c.startsWith(`${KEY}.corrupt-`)), 'se crea respaldo .corrupt-<fecha>');
+      });
+
+      await prueba('pedidos v2', () => {
+        const estado = storage.normalizeState({
+          pedidos: [{ id: 'ped-prueba', totalCentavos: 1000, estado: ' EstadoNoValido ' }]
+        });
+        assert(estado.pedidos[0].estado === 'Pendiente', 'estado inválido se normaliza a Pendiente');
+        assert(/^\d{4}-\d{2}-\d{2}/.test(estado.pedidos[0].fechaEntrega), 'pedido tiene fechaEntrega ISO');
+        assert(estado.pedidos[0].inventarioDescontado === false, 'pedido tiene inventarioDescontado');
+      });
+
+      await prueba('Fase 3: demanda agregada y disponibilidad automática', () => {
+        const estado = createSeedState();
+        const producto = estado.productos.find((p) => p.id === 'prod-ramo-rosas-clasicas');
+        const reqs = estado.productos.length ? estado.inventario.recetas.find((r) => r.productoId === producto.id).items : [];
+        const rosa = nombreInsumo(estado, 'Rosas nacionales');
+        assert(reqs.some((r) => r.insumoId === rosa.id && r.cantidad === 12), 'receta de rosas requiere 12 tallos por unidad');
+        assert(validarDisponibilidad(estado, [{ productId: producto.id, cantidad: 10 }]).ok, '10 unidades caben en el stock agregado');
+        const exceso = validarDisponibilidad(estado, [{ productId: producto.id, cantidad: 11 }]);
+        assert(!exceso.ok && exceso.faltantes.some((texto) => /Rosas nacionales/.test(texto)), '11 unidades exceden el stock agregado');
+        assert(estadoProducto(estado, producto).disponible, 'producto con stock suficiente está disponible');
+
+        const sinStock = createSeedState();
+        const papel = nombreInsumo(sinStock, 'Papel kraft');
+        consumeFIFO(sinStock, papel.id, papel.stockActual, { tipo: 'pedido', id: 'ped-agotar' });
+        const tarjeta = sinStock.productos.find((p) => p.id === 'prod-tarjeta-personalizada');
+        assert(estadoProducto(sinStock, tarjeta).etiqueta === 'Sin stock', 'falta de stock muestra Sin stock');
+        assert(!productoDisponible(sinStock, tarjeta), 'producto sin stock no es vendible');
+
+        const manual = createSeedState();
+        const otro = manual.productos.find((p) => p.id === 'prod-ramo-claveles');
+        manual.disponibilidad[otro.id] = false;
+        assert(estadoProducto(manual, otro).etiqueta === 'Agotado', 'control manual sigue mostrando Agotado');
+      });
+
+      await prueba('Fase 3: desconta FIFO y marca inventarioDescontado', () => {
+        const estado = createSeedState();
+        const rosas = nombreInsumo(estado, 'Rosas nacionales');
+        const antes = rosas.stockActual;
+        const pedido = {
+          id: 'ped-fase3',
+          fechaCreacion: new Date().toISOString(),
+          items: [{ productId: 'prod-ramo-rosas-clasicas', cantidad: 2 }]
+        };
+        const movimientos = descontarPedido(estado, pedido);
+        assert(pedido.inventarioDescontado === true, 'pedido queda marcado como descontado');
+        assert(Array.isArray(pedido.inventarioMovimientos) && pedido.inventarioMovimientos.length === movimientos.length, 'se registran los IDs de movimientos');
+        assert(rosas.stockActual === antes - 24, '2 ramos descuentan 24 tallos');
+        assert(movimientos.every((m) => m.tipo === 'salida' && m.referencia.id === 'ped-fase3'), 'movimientos son salidas referidas al pedido');
+
+        const fallido = createSeedState();
+        const snapshot = JSON.stringify(fallido);
+        let error = null;
+        try {
+          descontarPedido(fallido, {
+            id: 'ped-falla-fase3',
+            items: [{ productId: 'prod-ramo-rosas-clasicas', cantidad: 11 }]
+          });
+        } catch (e) { error = e; }
+        assert(!!error && /Stock insuficiente/.test(error.message), 'descuento con demanda agregada excedida lanza error');
+        assert(JSON.stringify(fallido) === snapshot, 'un descuento fallido no muta el estado');
+      });
+
+      await prueba('Fase 3: entradas, ajustes, mermas y baja suave', () => {
+        const estado = createSeedState();
+        const rosas = nombreInsumo(estado, 'Rosas nacionales');
+        const claveles = nombreInsumo(estado, 'Claveles');
+        const papel = nombreInsumo(estado, 'Papel kraft');
+        const antesRosas = rosas.stockActual;
+        const antesClaveles = claveles.stockActual;
+        const antesPapel = papel.stockActual;
+        const lotePapel = estado.inventario.lotes.find((l) => l.insumoId === papel.id);
+        const cantidadLotePapel = lotePapel.cantidadActual;
+        const lotesAntes = estado.inventario.lotes.length;
+        const mermasAntes = estado.inventario.mermas.length;
+
+        const entrada = registrarMovimientoEnDraft(estado, { tipo: 'entrada', insumoId: rosas.id, cantidad: 10, costoUnitarioCentavos: 400, motivo: 'compra' });
+        assert(rosas.stockActual === antesRosas + 10, 'una entrada suma al stock');
+        assert(estado.inventario.lotes.length === lotesAntes + 1 && entrada.loteId, 'la entrada crea un lote');
+        registrarMovimientoEnDraft(estado, { tipo: 'ajuste', insumoId: claveles.id, cantidad: -5, motivo: 'conteo' });
+        assert(claveles.stockActual === antesClaveles - 5, 'ajuste negativo corrige el stock');
+        registrarMovimientoEnDraft(estado, { tipo: 'merma', insumoId: papel.id, cantidad: 2, motivo: 'humedad' });
+        assert(papel.stockActual === antesPapel - 2, 'la merma resta del stock');
+        assert(lotePapel.cantidadActual === cantidadLotePapel - 2, 'la merma se descuenta del lote FIFO');
+        assert(estado.inventario.mermas.length === mermasAntes + 1, 'la merma queda registrada');
+        assert(estado.inventario.movimientos.some((m) => m.tipo === 'merma' && m.loteId === lotePapel.id), 'la merma queda en el ledger con lote');
+
+        guardarInsumoEnDraft(estado, { ...claveles, activo: false }, claveles.id);
+        assert(claveles.activo === false && estado.inventario.insumos.includes(claveles), 'baja suave conserva el insumo');
+      });
+
+      await prueba('Fase 3: guardar receta asigna recetaId al producto', () => {
+        const estado = createSeedState();
+        const papel = nombreInsumo(estado, 'Papel kraft');
+        const cinta = nombreInsumo(estado, 'Cinta de yute');
+        const producto = estado.productos.find((p) => p.id === 'prod-tarjeta-personalizada');
+        const receta = guardarRecetaEnDraft(estado, {
+          productoId: producto.id,
+          nombre: 'Tarjeta con cinta',
+          items: { [papel.id]: 1, [cinta.id]: 0.25 },
+          activo: true
+        });
+        assert(producto.recetaId === receta.id, 'el producto queda vinculado a la receta');
+        assert(receta.items.length === 2 && receta.items.some((i) => i.insumoId === cinta.id && i.cantidad === 0.25), 'la receta conserva decimales permitidos');
+      });
+
+      await prueba('Fase 3: createOrder descuenta stock desde la app', async () => {
+        await storage.reset();
+        await storage.update((draft) => {
+          draft.carrito = [{
+            id: 'item-fase3', productId: 'prod-ramo-rosas-clasicas', nombre: 'Ramo de rosas clásicas',
+            imagen: '', precioCentavos: 25000, cantidad: 2, opciones: {}, dedicatoria: ''
+          }];
+        });
+        const pedido = await createOrder({ nombre: 'Prueba', telefono: '4000000', direccion: 'Cochabamba', fechaEntrega: '2026-12-01' });
+        const estado = await storage.getAll();
+        const rosas = nombreInsumo(estado, 'Rosas nacionales');
+        assert(estado.pedidos[0].id === pedido.id, 'el pedido se registra');
+        assert(estado.pedidos[0].inventarioDescontado === true, 'pedido creado desde la app marca inventarioDescontado');
+        assert(estado.carrito.length === 0, 'el carrito se vacía');
+        assert(rosas.stockActual === 96, 'el stock baja de 120 a 96 tallos');
+
+        await storage.update((draft) => {
+          draft.carrito = [{
+            id: 'item-falla', productId: 'prod-ramo-rosas-clasicas', nombre: 'Ramo de rosas clásicas',
+            imagen: '', precioCentavos: 25000, cantidad: 20, opciones: {}, dedicatoria: ''
+          }];
+        });
+        const antes = await storage.getAll();
+        let error = null;
+        try { await createOrder({ nombre: 'Prueba', telefono: '4000000', direccion: 'Cochabamba', fechaEntrega: '2026-12-01' }); }
+        catch (e) { error = e; }
+        const despues = await storage.getAll();
+        assert(!!error && /Stock insuficiente/.test(error.message), 'createOrder rechaza pedidos sin stock');
+        assert(despues.pedidos.length === antes.pedidos.length && despues.carrito.length === 1, 'un pedido rechazado no cambia pedidos ni carrito');
+        assert(nombreInsumo(despues, 'Rosas nacionales').stockActual === 96, 'un pedido rechazado no descuenta stock');
+      });
+
+      await prueba('reset restaura semilla y limpia legacy', async () => {
+        localStorage.setItem(CLAVE_OTRA, 'no borrar');
+        await storage.migrateV1({ ...v1Supuesto, otraVieja: 1 });
+        const antes = await storage.getAll();
+        assert(Object.keys(antes.legacy).length > 0, 'antes del reset hay legacy');
+        await storage.reset();
+        const despues = await storage.getAll();
+        assert(Object.keys(despues.legacy).length === 0, 'reset limpia legacy');
+        assert(despues.productos.length === 9, 'reset restaura los 9 productos');
+        assert(despues.inventario.movimientos.every((m) => m.tipo === 'apertura'), 'reset restaura movimientos de apertura');
+        assert(localStorage.getItem(CLAVE_OTRA) === 'no borrar', 'reset no borra otras claves');
+      });
+
+      await prueba('window.__debug', () => {
+        assert(typeof window.__debug?.getAll === 'function', '__debug.getAll expuesto');
+        assert(typeof window.__debug?.migrateV1 === 'function', '__debug.migrateV1 expuesto');
+        assert(typeof window.__debug?.reset === 'function', '__debug.reset expuesto');
+      });
+    }
+
+    try {
+      await ejecutar();
+    } finally {
+      for (const clave of claves()) {
+        if (clavesIniciales.has(clave)) continue;
+        if (clave === CLAVE_OTRA || clave.startsWith(`${KEY}.backup-`) || clave.startsWith(`${KEY}.corrupt-`)) {
+          localStorage.removeItem(clave);
+        }
+      }
+      if (claveOriginal == null) localStorage.removeItem(KEY);
+      else localStorage.setItem(KEY, claveOriginal);
+    }
+
+    const fallidos = resultados.filter((r) => !r.ok);
+    const resumen = document.getElementById('resumen');
+    const detalle = document.getElementById('detalle');
+    resumen.textContent = `Total: ${resultados.length} · Correctas: ${resultados.length - fallidos.length} · Fallidas: ${fallidos.length}`;
+    resumen.className = fallidos.length ? 'fail' : 'ok';
+    for (const resultado of resultados) {
+      const li = document.createElement('li');
+      li.textContent = `${resultado.ok ? '✓' : '✗'} ${resultado.mensaje}`;
+      li.className = resultado.ok ? 'ok' : 'fail';
+      detalle.appendChild(li);
+    }
+    window.__testResults = { total: resultados.length, pasadas: resultados.length - fallidos.length, fallidas: fallidos.length, detalles: resultados };
+  </script>
+</body>
+</html>

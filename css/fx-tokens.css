@@ -1,0 +1,65 @@
+/* Flor del Nilo — alias de marca y tokens de movimiento.
+   Se carga después de styles.css y antes de animations.css. */
+
+:root{
+  /* Alias de marca → variables reales de styles.css */
+  --fx-color-ink:var(--ink);
+  --fx-color-green:var(--green);
+  --fx-color-green-2:var(--green-2);
+  --fx-color-cream:var(--cream);
+  --fx-color-paper:var(--paper);
+  --fx-color-petal:var(--pink);
+  --fx-color-petal-soft:var(--pink-light);
+  --fx-color-gold:var(--gold);
+  --fx-color-line:var(--line);
+  --fx-color-white:var(--white);
+  --fx-color-trazo:var(--fx-color-green-2);
+  --fx-color-halo:color-mix(in srgb,var(--fx-color-petal) 24%,transparent);
+  --fx-shadow-dock:0 10px 26px color-mix(in srgb,var(--fx-color-green) 12%,transparent);
+
+  /* Movimiento: entradas suaves, sin rebotes ni elásticos */
+  --fx-curva:cubic-bezier(.22,1,.36,1);
+  --fx-dur-entrada:900ms;
+  --fx-dur-anotacion:900ms;
+  --fx-dur-dock:700ms;
+  --fx-dur-halo:700ms;
+  --fx-dur-respuesta:140ms;
+  --fx-paso-anotacion:90ms;
+  --fx-amplitud:8px;
+  --fx-escala-dock:1.16;
+  --fx-radio-dock:140px;
+  --fx-suavizado:0.16;
+
+  /* Fase 7 — narrativa botánica */
+  --fx-dur-dibujo:900ms;
+  --fx-dur-balanceo:4000ms;
+  --fx-pulso-periodo:6000ms;
+  --fx-pulso-dur:900ms;
+  --fx-curva-balanceo:ease-in-out;
+  --fx-giro-max:18deg;
+
+  /* Fase 8 — mariposa del catálogo */
+  --fx-dur-vuelo:9000ms;
+  --fx-amplitud-vuelo:26px;
+  --fx-frecuencia-alas:520ms;
+}
+
+@media(prefers-reduced-motion:reduce){
+  :root{
+    --fx-dur-entrada:0ms;
+    --fx-dur-anotacion:0ms;
+    --fx-dur-dock:0ms;
+    --fx-dur-halo:0ms;
+    --fx-dur-respuesta:0ms;
+    --fx-paso-anotacion:0ms;
+    --fx-amplitud:0px;
+    --fx-escala-dock:1;
+    --fx-dur-dibujo:0ms;
+    --fx-dur-balanceo:0ms;
+    --fx-pulso-periodo:0ms;
+    --fx-giro-max:0deg;
+    --fx-dur-vuelo:0ms;
+    --fx-amplitud-vuelo:0px;
+    --fx-frecuencia-alas:0ms
+  }
+}
