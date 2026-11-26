@@ -1,7 +1,7 @@
 import { CONFIG, ETIQUETAS_OPCION } from './config.js';
 import { OCASIONES } from './seed-base.js';
 import { getAll } from './inventory/storage.js';
-import { estadoProducto, formatearCantidad, validarDisponibilidad } from './inventory/operations.js';
+import { estadoProducto, validarDisponibilidad } from './inventory/operations.js';
 import * as ui from './ui.js';
 import * as cart from './cart.js';
 
@@ -30,11 +30,11 @@ function renderOcasiones() {
   const grid = document.getElementById('occasion-grid');
   if (!grid || ocasionesListas) return;
   const html = OCASIONES.map((ocasion) => ui.tpl`
-    <article class="occasion-card">
-      <img src="${ocasion.imagen}" alt="${ocasion.titulo}" loading="lazy">
+    <a class="occasion-card" href="#catalogo" data-ocasion="${ocasion.categoria}" aria-label="Ver arreglos para ${ocasion.titulo}">
+      <img src="${ocasion.imagen}" alt="" loading="lazy">
       <h3>${ocasion.titulo}</h3>
       <p>${ocasion.descripcion}</p>
-    </article>
+    </a>
   `).join('');
   ui.setHTML(grid, html);
   ocasionesListas = true;
@@ -66,24 +66,32 @@ function renderProductos(state) {
   if (!grid) return;
   const visibles = productos.filter(pasaFiltro);
   if (!visibles.length) {
-    ui.setHTML(grid, '<p class="small-note">No encontramos arreglos con esos filtros.</p>');
+    ui.setHTML(grid, ui.tpl`
+      <div class="empty-state">
+        <p class="small-note">No encontramos arreglos con esos filtros.</p>
+        <button class="button ghost small" type="button" data-limpiar-filtros>Limpiar filtros</button>
+      </div>
+    `);
     return;
   }
   const html = visibles.map((producto) => {
     const estado = estadoProducto(state, producto);
-    const disabled = estado.disponible ? '' : ' disabled';
+    const agotado = !estado.disponible;
+    const disabled = agotado ? ' disabled' : '';
+    const etiquetaBoton = agotado ? `${producto.nombre}: ${estado.etiqueta}` : `Ver ${producto.nombre}`;
     return ui.tpl`
       <article class="product-card">
         <div class="product-image">
           <img src="${producto.imagen}" alt="${producto.nombre}" loading="lazy">
-          <span class="availability ${estado.etiqueta === 'Sin stock' ? 'out' : ''}">${estado.etiqueta}</span>
+          <span class="availability ${agotado ? 'out' : ''}">${estado.etiqueta}</span>
         </div>
         <div class="product-body">
           <h3>${producto.nombre}</h3>
           <div class="product-meta">
             <span class="product-price">${ui.formatMoney(producto.precioCentavos)}</span>
-            <button class="add-button" type="button" data-add-product="${producto.id}" aria-label="Ver ${producto.nombre}"${ui.raw(disabled)}>${estado.disponible ? '+' : '×'}</button>
+            <button class="add-button" type="button" data-add-product="${producto.id}" aria-label="${etiquetaBoton}"${ui.raw(disabled)}>${agotado ? '×' : '+'}</button>
           </div>
+          ${agotado ? ui.raw(ui.tpl`<small class="availability-message out small-note">${estado.etiqueta} · no disponible ahora</small>`) : ''}
         </div>
       </article>
     `;
@@ -119,17 +127,12 @@ export async function openProduct(id) {
   }
   productoActual = producto;
   const opciones = construirOpciones();
-  const requerimientos = estado.requerimientos || [];
-  const detalleStock = requerimientos.length
-    ? ui.tpl`<p class="small-note">Insumos: ${requerimientos.map((req) => `${req.insumo.nombre} ${formatearCantidad(req.requerido)} ${req.insumo.unidad} (disponible ${formatearCantidad(req.stock)})`).join(' · ')}</p>`
-    : '';
   const html = ui.tpl`
     <div class="detail-image"><img src="${producto.imagen}" alt="${producto.nombre}"></div>
     <div class="detail-copy">
       <h2>${producto.nombre}</h2>
       <p>${producto.descripcion}</p>
       <div class="detail-price">${ui.formatMoney(producto.precioCentavos)}</div>
-      ${ui.raw(detalleStock)}
       ${ui.raw(opciones)}
       <fieldset class="option-group">
         <legend>Dedicatoria (opcional)</legend>
@@ -192,6 +195,26 @@ export function init() {
     getAll().then(render);
   });
   grid?.addEventListener('click', (event) => {
+    const ocasion = event.target.closest('[data-ocasion]');
+    if (ocasion) {
+      filtros.categoria = ocasion.dataset.ocasion;
+      if (categoria) categoria.value = filtros.categoria;
+      getAll().then((estado) => {
+        render(estado);
+        document.getElementById('catalogo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      return;
+    }
+    if (event.target.closest('[data-limpiar-filtros]')) {
+      filtros.texto = '';
+      filtros.categoria = 'all';
+      filtros.precio = 'all';
+      if (busqueda) busqueda.value = '';
+      if (categoria) categoria.value = 'all';
+      if (precio) precio.value = 'all';
+      getAll().then(render);
+      return;
+    }
     const boton = event.target.closest('[data-add-product]');
     if (boton && !boton.disabled) openProduct(boton.dataset.addProduct);
   });

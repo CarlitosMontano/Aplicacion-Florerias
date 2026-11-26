@@ -83,10 +83,10 @@ const PRODUCTOS = [
 ];
 
 export const OCASIONES = [
-  { id: 'oc-cumpleanos', titulo: 'Cumpleaños', descripcion: 'Sorprende con color', imagen: foto('photo-1531058020387-3be344556be6') },
-  { id: 'oc-aniversario', titulo: 'Aniversario', descripcion: 'Detalles que perduran', imagen: foto('photo-1523438885200-e635ba2c371e') },
-  { id: 'oc-agradecimiento', titulo: 'Agradecimiento', descripcion: 'Di gracias con flores', imagen: foto('photo-1490750967868-88aa4486c946') },
-  { id: 'oc-recordatorio', titulo: 'Recordatorio', descripcion: 'Un gesto que acompaña', imagen: foto('photo-1518895949257-7621c3c786d7') }
+  { id: 'oc-cumpleanos', titulo: 'Cumpleaños', descripcion: 'Sorprende con color', categoria: 'globos', imagen: foto('photo-1531058020387-3be344556be6') },
+  { id: 'oc-aniversario', titulo: 'Aniversario', descripcion: 'Detalles que perduran', categoria: 'flores', imagen: foto('photo-1523438885200-e635ba2c371e') },
+  { id: 'oc-agradecimiento', titulo: 'Agradecimiento', descripcion: 'Di gracias con flores', categoria: 'papel', imagen: foto('photo-1490750967868-88aa4486c946') },
+  { id: 'oc-recordatorio', titulo: 'Recordatorio', descripcion: 'Un gesto que acompaña', categoria: 'preservadas', imagen: foto('photo-1518895949257-7621c3c786d7') }
 ];
 
 export const CATEGORIAS = Object.freeze([...new Set(PRODUCTOS.map((p) => p.categoria))].sort((a, b) => a.localeCompare(b, 'es')));

@@ -1,3 +1,4 @@
+import { ETIQUETAS_OPCION } from './config.js';
 import { getAll, update } from './inventory/storage.js';
 import { estadoProducto, productoDisponible, validarDisponibilidad } from './inventory/operations.js';
 import * as ui from './ui.js';
@@ -82,7 +83,7 @@ export function render(state) {
   const filas = items.map((item) => {
     const producto = (state.productos || []).find((p) => p.id === item.productId);
     const disponible = producto ? productoDisponible(state, producto) : false;
-    const detalles = Object.entries(item.opciones || {}).map(([clave, valor]) => `${clave}: ${valor}`).join(' · ');
+    const detalles = Object.entries(item.opciones || {}).map(([clave, valor]) => `${ETIQUETAS_OPCION[clave] || clave}: ${valor}`).join(' · ');
     const nota = item.dedicatoria ? ` · Dedicatoria: ${item.dedicatoria}` : '';
     return ui.tpl`
       <article class="cart-item">

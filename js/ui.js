@@ -57,6 +57,8 @@ export function toast(message, prioridad = 1) {
   if (!node) return;
   if (prioridad < toastPrioridad && node.classList.contains('show')) return;
   toastPrioridad = prioridad;
+  node.setAttribute('role', prioridad >= 2 ? 'alert' : 'status');
+  node.setAttribute('aria-live', prioridad >= 2 ? 'assertive' : 'polite');
   node.textContent = String(message);
   node.classList.add('show');
   clearTimeout(toastTimer);
@@ -104,42 +106,22 @@ export function initGlobal() {
   }, true);
 }
 
-function inyectarBotonAdminMobile(onAdmin) {
-  const barra = document.getElementById('mobile-bottom-bar');
-  if (!barra || document.getElementById('mobile-admin')) return;
-  const boton = document.createElement('button');
-  boton.type = 'button';
-  boton.id = 'mobile-admin';
-  boton.textContent = 'Admin';
-  boton.setAttribute('aria-label', 'Abrir administración');
-  barra.appendChild(boton);
-  boton.addEventListener('click', onAdmin);
-}
-
 function initScroll() {
   const header = document.getElementById('site-header');
   const progress = document.getElementById('reading-progress');
-  const bottomBar = document.getElementById('mobile-bottom-bar');
-  const enlaces = [...document.querySelectorAll('#main-nav a')];
+  const enlaces = [...document.querySelectorAll('#main-nav a, #mobile-nav a')];
   const secciones = [...document.querySelectorAll('main section[id]')];
-  let ultimaY = window.scrollY;
 
   function actualizar() {
     const y = window.scrollY;
     const altura = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     if (progress) progress.style.width = `${altura ? (y / altura) * 100 : 0}%`;
-    if (header) {
-      header.classList.toggle('compact', y > 12);
-      header.classList.toggle('hidden', y > 240 && y > ultimaY + 4);
-      if (y < ultimaY - 4) header.classList.remove('hidden');
-    }
-    if (bottomBar) bottomBar.classList.toggle('visible', y > 320);
+    header?.classList.toggle('compact', y > 12);
     let activo = '';
     for (const seccion of secciones) {
       if (seccion.offsetTop - 150 <= y) activo = seccion.id;
     }
     enlaces.forEach((enlace) => enlace.classList.toggle('active', enlace.getAttribute('href') === `#${activo}`));
-    ultimaY = y;
   }
 
   window.addEventListener('scroll', actualizar, { passive: true });
@@ -149,31 +131,46 @@ function initScroll() {
 
 export function initChrome(handlers = {}) {
   const toggle = document.getElementById('menu-toggle');
-  const nav = document.getElementById('main-nav');
+  const nav = document.getElementById('mobile-nav');
   if (toggle && nav) {
-    toggle.addEventListener('click', () => {
-      const abierto = nav.classList.toggle('open');
+    const sincronizar = (abierto, moverFoco = true) => {
+      nav.classList.toggle('open', abierto);
+      nav.setAttribute('aria-hidden', String(!abierto));
+      if (abierto) nav.removeAttribute('inert');
+      else nav.setAttribute('inert', '');
+      nav.inert = !abierto;
       toggle.setAttribute('aria-expanded', String(abierto));
       toggle.setAttribute('aria-label', abierto ? 'Cerrar menú' : 'Abrir menú');
-    });
+      if (!moverFoco) return;
+      setTimeout(() => {
+        if (abierto) {
+          const cierre = nav.querySelector('[data-nav-close]');
+          if (cierre) {
+            getComputedStyle(cierre).visibility;
+            cierre.focus();
+          }
+        } else toggle.focus({ preventScroll: true });
+      }, 50);
+    };
+    toggle.addEventListener('click', () => sincronizar(!nav.classList.contains('open')));
     nav.addEventListener('click', (event) => {
-      if (event.target.closest('a')) {
-        nav.classList.remove('open');
-        toggle.setAttribute('aria-expanded', 'false');
-      }
+      if (event.target.closest('a, [data-nav-close]')) sincronizar(false);
     });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && nav.classList.contains('open')) sincronizar(false);
+    });
+    sincronizar(false, false);
   }
 
   document.addEventListener('click', (event) => {
     if (event.target.closest('[data-scroll-catalog]')) {
       document.getElementById('catalogo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-    if (event.target.closest('#cart-button')) handlers.onCart?.();
-    if (event.target.closest('#demo-button')) handlers.onDemo?.();
-    if (event.target.closest('#admin-link')) handlers.onAdmin?.();
+    if (event.target.closest('#cart-button, #mobile-cart')) handlers.onCart?.();
+    if (event.target.closest('#demo-button, #demo-chip')) handlers.onDemo?.();
+    if (event.target.closest('#mobile-admin')) handlers.onAdmin?.();
     if (event.target.closest('#mobile-order')) handlers.onCheckout?.();
   });
 
-  inyectarBotonAdminMobile(() => handlers.onAdmin?.());
   initScroll();
 }

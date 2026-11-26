@@ -19,7 +19,8 @@
 .fx-reduced .reveal.right{opacity:1;transform:none;transition:none}
 
 @media(max-width:600px){
-  .motion-toggle{padding:6px 8px;font-size:.6rem;max-width:76px;white-space:normal;text-align:center}
+  .motion-toggle{width:44px;height:44px;padding:0;max-width:none;font-size:0;display:grid;place-items:center;white-space:nowrap}
+  .motion-toggle::after{content:'✦';font-size:1.05rem}
 }
 
 .hero{position:relative;isolation:isolate}
@@ -86,15 +87,13 @@
 @media(prefers-reduced-motion:reduce){.fx-spotlight .occasion-card::after{opacity:0!important;transition:none}}
 
 .fx-dock{position:fixed;display:flex;flex-direction:column;left:0;right:auto;top:50%;bottom:auto;z-index:15;width:auto;max-width:none;gap:8px;padding:12px 10px;border:0;border-right:1px solid var(--fx-color-line);border-radius:0 18px 18px 0;background:var(--fx-color-paper);box-shadow:var(--fx-shadow-dock);transform:translateY(-50%)}
-.fx-dock.visible{transform:translateY(-50%)}
-.fx-dock button{transform:scale(var(--fx-dock-scale,1));flex:0 0 auto;min-width:108px;padding:11px 14px;border:0;border-radius:99px;background:transparent;color:var(--fx-color-green);font-weight:700;font-size:.8rem;transition:transform var(--fx-dur-respuesta) var(--fx-curva)}
+.fx-dock button{transform:scale(var(--fx-dock-scale,1));flex:0 0 auto;min-width:108px;min-height:44px;padding:11px 14px;border:0;border-radius:99px;background:transparent;color:var(--fx-color-green);font-weight:700;font-size:.8rem;transition:transform var(--fx-dur-respuesta) var(--fx-curva)}
 .fx-dock button+button{background:var(--fx-color-petal-soft)}
 .fx-dock button:nth-child(3){background:var(--fx-color-cream)}
 .fx-dock button:focus-visible{outline:2px solid var(--fx-color-green);outline-offset:2px}
 @media(max-width:600px){
   .fx-dock{left:50%;right:auto;top:auto;bottom:calc(14px + env(safe-area-inset-bottom));z-index:70;flex-direction:row;width:max-content;max-width:calc(100% - 24px);gap:6px;padding:8px;border:1px solid var(--fx-color-line);border-radius:99px;transform:translate(-50%,0)}
-  .fx-dock.visible{transform:translate(-50%,0)}
-  .fx-dock button{min-width:0;padding:10px 13px;font-size:.72rem;line-height:1.2;text-align:center}
+  .fx-dock button{min-width:0;min-height:44px;padding:8px 10px;font-size:.74rem;line-height:1.2;text-align:center}
   .fx-whatsapp{bottom:calc(84px + env(safe-area-inset-bottom))}
 }
 .fx-reduced .fx-dock button{transform:none!important;transition:none}

@@ -1,3 +1,4 @@
+import { ETIQUETAS_OPCION } from './config.js';
 import { getAll } from './inventory/storage.js';
 import { validarDisponibilidad } from './inventory/operations.js';
 import { createOrder } from './orders.js';
@@ -15,6 +16,7 @@ const ETIQUETAS = {
 
 let paso = 1;
 let datos = {};
+let pedidoConfirmado = null;
 let handlers = {};
 let eventosListos = false;
 
@@ -35,6 +37,12 @@ function mananaISO() {
   return fechaLocalISO(fecha);
 }
 
+function fechaMaximaISO() {
+  const fecha = new Date();
+  fecha.setFullYear(fecha.getFullYear() + 1);
+  return fechaLocalISO(fecha);
+}
+
 function syncForm() {
   for (const campo of CAMPOS) {
     const nodo = document.getElementById(`co-${campo}`);
@@ -43,16 +51,17 @@ function syncForm() {
 }
 
 function renderPasos() {
-  const pasos = [1, 2, 3].map((numero) => ui.tpl`<span class="${numero <= paso ? 'on' : ''}"></span>`).join('');
-  return ui.tpl`<div class="checkout-steps" aria-label="Paso ${paso} de 3">${ui.raw(pasos)}</div>`;
+  const etiqueta = paso === 4 ? 'Pedido registrado' : `Paso ${paso} de 3`;
+  const pasos = [1, 2, 3].map((numero) => ui.tpl`<li${ui.raw(numero === paso ? ' aria-current="step"' : '')}><span class="${numero <= Math.min(paso, 3) ? 'on' : ''}"></span></li>`).join('');
+  return ui.tpl`<ol class="checkout-steps" aria-label="${etiqueta}">${ui.raw(pasos)}</ol>`;
 }
 
 function renderDatos() {
   const controles = [
-    { campo: 'nombre', tipo: 'text', extra: ' required maxlength="80"', ancho: '' },
-    { campo: 'telefono', tipo: 'tel', extra: ' required maxlength="20"', ancho: '' },
-    { campo: 'fechaEntrega', tipo: 'date', extra: ` required min="${hoyISO()}"`, ancho: '' },
-    { campo: 'direccion', tipo: 'text', extra: ' required maxlength="160"', ancho: ' full' },
+    { campo: 'nombre', tipo: 'text', extra: ' required maxlength="80" autocomplete="name"', ancho: '' },
+    { campo: 'telefono', tipo: 'tel', extra: ' required maxlength="20" inputmode="tel" autocomplete="tel"', ancho: '' },
+    { campo: 'fechaEntrega', tipo: 'date', extra: ` required min="${hoyISO()}" max="${fechaMaximaISO()}"`, ancho: '' },
+    { campo: 'direccion', tipo: 'text', extra: ' required maxlength="160" autocomplete="street-address"', ancho: ' full' },
     { campo: 'notas', tipo: 'textarea', extra: ' maxlength="300"', ancho: ' full' }
   ];
   const campos = controles.map(({ campo, tipo, extra, ancho }) => {
@@ -60,7 +69,8 @@ function renderDatos() {
     const control = tipo === 'textarea'
       ? ui.tpl`<textarea id="co-${campo}" maxlength="300" placeholder="Opcional">${valor}</textarea>`
       : ui.tpl`<input id="co-${campo}" type="${tipo}" value="${valor}"${ui.raw(extra)}>`;
-    return ui.tpl`<label class="${ancho.trim()}">${ETIQUETAS[campo]}${ui.raw(control)}</label>`;
+    const ayuda = campo === 'notas' ? '<small class="small-note">Máximo 160 caracteres.</small>' : '';
+    return ui.tpl`<label class="${ancho.trim()}">${ETIQUETAS[campo]}${ui.raw(control)}${ui.raw(ayuda)}</label>`;
   }).join('');
   return ui.tpl`
     ${ui.raw(renderPasos())}
@@ -75,7 +85,7 @@ function renderDatos() {
 
 function resumenItems(state) {
   return (state.carrito || []).map((item) => {
-    const opciones = Object.entries(item.opciones || {}).map(([clave, valor]) => `${clave}: ${valor}`).join(' · ');
+    const opciones = Object.entries(item.opciones || {}).map(([clave, valor]) => `${ETIQUETAS_OPCION[clave] || clave}: ${valor}`).join(' · ');
     const nota = item.dedicatoria ? `Dedicatoria: ${item.dedicatoria}` : '';
     const detalle = [opciones, nota].filter(Boolean).join(' · ');
     return ui.tpl`
@@ -117,12 +127,35 @@ function renderConfirmacion(state) {
   return ui.tpl`
     ${ui.raw(renderPasos())}
     <h2>Confirmación</h2>
-    <p>Gracias, ${datos.nombre}. Tu pedido para el ${ui.formatFecha(datos.fechaEntrega)} está listo para registrarse.</p>
+    <p>Revisa los datos y confirma tu pedido para ${ui.formatFecha(datos.fechaEntrega)}.</p>
     ${ui.raw(aviso)}
     <div class="cart-total"><span>Total a pagar contra entrega</span><strong>${ui.formatMoney(total(state))}</strong></div>
     <div class="checkout-actions">
       <button class="button ghost" type="button" data-co-back>Volver</button>
       <button class="button primary" type="button" data-co-confirm ${validacion.ok ? '' : 'disabled'}>Confirmar pedido</button>
+    </div>
+  `;
+}
+
+
+function renderRecibo(pedido) {
+  if (!pedido) return '<p class="small-note">No se pudo mostrar el comprobante.</p>';
+  const resumen = (pedido.items || []).map((item) => `${item.nombre} ×${item.cantidad}`).join(', ');
+  const mensaje = encodeURIComponent(`Hola, quiero consultar el pedido ${pedido.id}.`);
+  return ui.tpl`
+    ${ui.raw(renderPasos())}
+    <div class="order-receipt">
+      <h2>Pedido registrado</h2>
+      <span class="receipt-id">N.º ${pedido.id.slice(-6).toUpperCase()}</span>
+      <p>Guarda este número para consultar tu pedido en la demostración.</p>
+      <div class="cart-total"><span>Total</span><strong>${ui.formatMoney(pedido.totalCentavos)}</strong></div>
+      <p class="small-note">Entrega prevista: ${ui.formatFecha(pedido.fechaEntrega)} · ${pedido.cliente?.direccion || ''}</p>
+      <p class="receipt-next">${resumen}</p>
+      <p class="receipt-next">Los pedidos de esta demo quedan guardados solo en este dispositivo.</p>
+      <div class="checkout-actions">
+        <a class="button primary" href="https://wa.me/59160588102?text=${mensaje}" target="_blank" rel="noreferrer">Consultar por WhatsApp</a>
+        <button class="button ghost" type="button" data-co-close>Cerrar</button>
+      </div>
     </div>
   `;
 }
@@ -133,7 +166,8 @@ async function render() {
   if (!contenido) return;
   if (paso === 1) ui.setHTML(contenido, renderDatos());
   else if (paso === 2) ui.setHTML(contenido, renderRevision(state));
-  else ui.setHTML(contenido, renderConfirmacion(state));
+  else if (paso === 3) ui.setHTML(contenido, renderConfirmacion(state));
+  else ui.setHTML(contenido, renderRecibo(pedidoConfirmado));
   animarPaso(contenido);
 }
 
@@ -148,12 +182,12 @@ function validarDatos() {
     }
   }
   const telefono = String(datos.telefono || '').replace(/[\s()-]/g, '');
-  if (!/^\d{7,8}$/.test(telefono)) {
-    ui.toast('Ingresa un teléfono válido de 7 u 8 dígitos');
+  if (!/^[2-79]\d{6,7}$/.test(telefono)) {
+    ui.toast('Ingresa un teléfono boliviano válido de 7 u 8 dígitos');
     return false;
   }
-  if (datos.fechaEntrega < hoyISO()) {
-    ui.toast('La fecha de entrega no puede ser anterior a hoy');
+  if (datos.fechaEntrega < hoyISO() || datos.fechaEntrega > fechaMaximaISO()) {
+    ui.toast('Elige una fecha de entrega dentro del próximo año');
     return false;
   }
   return true;
@@ -167,8 +201,9 @@ async function confirmar() {
       ui.toast('No se pudo registrar el pedido');
       return;
     }
-    ui.closeModal('checkout-modal');
-    ui.toast('Pedido registrado correctamente');
+    pedidoConfirmado = pedido;
+    paso = 4;
+    await render();
   } catch (error) {
     ui.toast(error.message || 'No se pudo registrar el pedido', 'error');
     await render();
@@ -182,6 +217,7 @@ export async function openCheckout() {
     return;
   }
   paso = 1;
+  pedidoConfirmado = null;
   datos = { nombre: '', telefono: '', direccion: '', fechaEntrega: mananaISO(), notas: '' };
   await render();
   ui.openModal('checkout-modal');
@@ -211,6 +247,7 @@ export function init(opciones = {}) {
       return;
     }
     if (event.target.closest('[data-co-confirm]')) await confirmar();
+    if (event.target.closest('[data-co-close]')) ui.closeModal('checkout-modal');
   });
   eventosListos = true;
 }

@@ -23,7 +23,12 @@ export function openDemo() {
       <button type="button" data-demo-reset>Reiniciar demostración</button>
       <button type="button" data-demo-admin>Abrir administración</button>
     </div>
-    <p class="small-note">WhatsApp ${CONFIG.whatsapp.codigo} ${CONFIG.whatsapp.numero} y teléfono ${CONFIG.telefono.numero}: ficticios, pendientes de confirmar. ${CONFIG.horario}.</p>
+    <ul class="demo-notes">
+      <li>Productos, nombres y precios ficticios: sirven para presentar la experiencia digital.</li>
+      <li>El texto institucional y el horario de atención son propuestas pendientes de confirmación.</li>
+      <li>WhatsApp ${CONFIG.whatsapp.codigo} ${CONFIG.whatsapp.numero} y teléfono ${CONFIG.telefono.numero} son ficticios, pendientes de confirmar.</li>
+      <li>No se procesa ningún pago: los pedidos quedan guardados solo en este dispositivo.</li>
+    </ul>
   `);
   ui.openModal('demo-modal');
 }
